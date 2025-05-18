@@ -1,24 +1,36 @@
 const File = require("../models/file");
 const fs = require("fs");
+const dotenv = require("dotenv");
 const path = require("path");
 const mime = require("mime-types"); // You'll need to install this: npm install mime-types
 const { isTextFile } = require("../helpers/isTextFile");
 
 // Base directory for all user files
-const BASE_DIR = path.join(
-  "C:",
-  "Users",
-  "abbed",
-  "Desktop",
-  "Code-Collab-User-Files"
-);
+// C:\CC-USER-FILES
+const BASE_DIR =
+  process.env.FILE_STORAGE_PATH || path.join("C:", "CC-USER-FILES");
 if (!fs.existsSync(BASE_DIR)) {
   fs.mkdirSync(BASE_DIR, { recursive: true });
 }
 
 // Helper function to get user directory
 const getUserDir = (userId) => {
-  return path.join(BASE_DIR, userId);
+  // Sanitize userId to prevent directory traversal
+  if (userId.includes("..") || path.isAbsolute(userId)) {
+    throw new Error("Invalid user ID");
+  }
+  const userDir = path.join(BASE_DIR, userId);
+  if (!fs.existsSync(userDir)) {
+    try {
+      fs.mkdirSync(userDir, { recursive: true });
+      console.log(`Created user directory at ${userDir}`);
+    } catch (err) {
+      console.error(`Failed to create user directory: ${err}`);
+      throw err;
+    }
+  }
+
+  return userDir;
 };
 
 // Create or update file content immediately
@@ -29,14 +41,23 @@ const saveFileContent = (filePath, content) => {
 const createFile = async (req, res) => {
   console.log("createFile");
   try {
-    const { name, type, path: filePathInput, project, organization, content } = req.body;
+    const {
+      name,
+      type,
+      path: filePathInput,
+      project,
+      organization,
+      content,
+    } = req.body;
     const createdBy = req.user.id.toString();
 
     console.log("Request body:", req.body);
-    
+
     // Validate required fields
     if (!name || !type || filePathInput === undefined) {
-      return res.status(400).json({ error: "Name, type, and path are required" });
+      return res
+        .status(400)
+        .json({ error: "Name, type, and path are required" });
     }
 
     // Create user directory if it doesn't exist
@@ -47,25 +68,27 @@ const createFile = async (req, res) => {
 
     // Normalize and clean the path
     let normalizedPath = filePathInput;
-    
+
     // Handle path separators
-    normalizedPath = normalizedPath.replace(/\\/g, '/'); // Convert all to forward slashes
-    normalizedPath = normalizedPath.replace(/^\/|\/$/g, ''); // Remove leading/trailing slashes
+    normalizedPath = normalizedPath.replace(/\\/g, "/"); // Convert all to forward slashes
+    normalizedPath = normalizedPath.replace(/^\/|\/$/g, ""); // Remove leading/trailing slashes
 
     console.log("Normalized path:", normalizedPath);
-    
+
     // Split path into segments
-    const pathSegments = normalizedPath.split('/').filter(segment => segment.trim() !== '');
+    const pathSegments = normalizedPath
+      .split("/")
+      .filter((segment) => segment.trim() !== "");
     console.log("Path segments:", pathSegments);
 
     // Build the full path starting from user directory
     let currentPath = userDir;
-    
+
     // Create all intermediate directories if they don't exist
     for (const segment of pathSegments) {
       currentPath = path.join(currentPath, segment);
       console.log("Creating intermediate path:", currentPath);
-      
+
       if (!fs.existsSync(currentPath)) {
         fs.mkdirSync(currentPath);
       }
@@ -80,19 +103,19 @@ const createFile = async (req, res) => {
       extension = path.extname(name).toLowerCase();
       fullPath = path.join(currentPath, name);
       console.log("Creating file at:", fullPath);
-      
+
       // Create file with content if provided
       if (content !== undefined) {
         saveFileContent(fullPath, content);
         size = fs.statSync(fullPath).size;
       } else {
-        fs.writeFileSync(fullPath, '');
+        fs.writeFileSync(fullPath, "");
       }
     } else if (type === "folder") {
       // Handle folder creation
       fullPath = path.join(currentPath, name);
       console.log("Creating folder at:", fullPath);
-      
+
       if (!fs.existsSync(fullPath)) {
         fs.mkdirSync(fullPath);
       } else {
@@ -114,17 +137,17 @@ const createFile = async (req, res) => {
       createdBy,
       ...(project && { project }),
       ...(organization && { organization }),
-      ...(type === "file" && { content: content || '' })
+      ...(type === "file" && { content: content || "" }),
     });
 
     await file.save();
     res.status(201).json({ message: "File created successfully", file });
   } catch (error) {
     console.error("Error creating file:", error);
-    res.status(500).json({ 
-      error: "File creation failed", 
+    res.status(500).json({
+      error: "File creation failed",
       details: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
   }
 };
@@ -147,7 +170,7 @@ const getEnhancedFileStructure = async (req, res) => {
         const relativePath = path.relative(relativeBase, fullPath);
 
         const node = {
-          id: relativePath,
+          _id: relativePath,
           name: item.name,
           path: relativePath,
           type: item.isDirectory() ? "folder" : "file",
@@ -235,6 +258,7 @@ const saveFile = async (req, res) => {
   try {
     const { id } = req.params;
     const { content } = req.body;
+    const broadcaster = req.broadcaster;
 
     const file = await File.findById(id);
     if (!file || file.isDeleted || file.type !== "file") {
@@ -247,7 +271,7 @@ const saveFile = async (req, res) => {
     saveFileContent(absolutePath, content);
 
     // Update in database
-    const updatedFile = await File.findByIdAndUpdate(
+    File.findByIdAndUpdate(
       id,
       {
         content,
@@ -256,6 +280,16 @@ const saveFile = async (req, res) => {
       },
       { new: true }
     );
+
+    // Broadcast update to all collaborators
+    if (broadcaster) {
+      broadcaster.broadcastToRoom(`file:${id}`, {
+        type: "file_saved",
+        fileId: id,
+        content,
+        timestamp: Date.now(),
+      });
+    }
 
     res.status(200).json({
       message: "File saved successfully",
