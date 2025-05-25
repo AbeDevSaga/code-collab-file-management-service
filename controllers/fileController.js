@@ -15,8 +15,10 @@ if (!fs.existsSync(BASE_DIR)) {
 
 // Helper function to get user directory
 const getUserDir = (userId) => {
+  console.log(`getUserDir`);
   // Sanitize userId to prevent directory traversal
   if (userId.includes("..") || path.isAbsolute(userId)) {
+    console.log("INVALID USER ID");
     throw new Error("Invalid user ID");
   }
   const userDir = path.join(BASE_DIR, userId);
@@ -30,6 +32,7 @@ const getUserDir = (userId) => {
     }
   }
 
+  console.log(`UserDi`, userDir);
   return userDir;
 };
 
@@ -39,6 +42,7 @@ const saveFileContent = (filePath, content) => {
 };
 
 const createFile = async (req, res) => {
+  
   console.log("createFile");
   try {
     const {

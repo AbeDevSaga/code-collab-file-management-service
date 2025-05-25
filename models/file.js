@@ -15,7 +15,7 @@ const FileSchema = new mongoose.Schema(
     organization: { type: mongoose.Schema.Types.ObjectId, ref: "Organization" }, // Organization the file belongs to
 
     // Shared users (array of users with access to the file)
-    sharedWith: [
+    sharedWith: [ 
       {
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // User with access
         role: { type: String, enum: ["viewer", "editor", "admin"], default: "viewer" }, // Permission level
